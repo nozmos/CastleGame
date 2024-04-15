@@ -42,13 +42,31 @@ class FrameData(bytes):
 
     @classmethod
     def generate_from_image(cls, imgpath: pathlib.Path | str) -> bytes:
+        framedata = bytearray("", "utf-8")
+
         with Image.open(imgpath) as image:
-            image = image.resize(_w, _h)
+            image = image.resize((_w, _h)).convert("L")
             image_arr = np.array(image, dtype="uint8")
-        image_str = ANSI_NEWLINE.join(
-                "".join(rgb_to_bash_bg(rgb, ' ') for rgb in row) \
-                + f'{ANSI_ESC}[0m' for row in image_arr
-            ) + ANSI_CURSORUP(_h)
+            
+        for row in image_arr:
+            row_str = "".join(rgb_to_bash_bg((g, g, g), " ") for g in row) + f'{ANSI_ESC}[0m{ANSI_NEWLINE}'
+            framedata += bytearray(row_str, 'utf-8')
+
+        return framedata + bytes(ANSI_CURSORUP(_h+1), "utf-8")
+
+    @classmethod
+    def generate_from_image_c(cls, imgpath: pathlib.Path | str) -> bytes:
+        framedata = bytearray("", "utf-8")
+
+        with Image.open(imgpath) as image:
+            image = image.resize((_w, _h))
+            image_arr = np.array(image, dtype="uint8")
+            
+        for row in image_arr:
+            row_str = "".join(rgb_to_bash_bg(rgb, " ") for rgb in row) + f'{ANSI_ESC}[0m{ANSI_NEWLINE}'
+            framedata += bytearray(row_str, 'utf-8')
+
+        return framedata + bytes(ANSI_CURSORUP(_h+1), "utf-8")
 
 def generate_framedata(
         imgpath: pathlib.Path | str
