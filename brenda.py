@@ -50,9 +50,24 @@ class FrameData(bytes):
                 + f'{ANSI_ESC}[0m' for row in image_arr
             ) + ANSI_CURSORUP(_h)
 
+def generate_framedata(
+        imgpath: pathlib.Path | str
+    ) -> bytearray:
+
+    framedata = bytearray("", "utf-8")
+
+    with Image.open(imgpath) as image:
+        image = image.resize((_w, _h)).convert("L")
+        image_arr = np.array(image, dtype="uint8")
+        
+    for row in image_arr:
+        row_str = "".join(rgb_to_bash_bg((g, g, g), " ") for g in row) + f'{ANSI_ESC}[0m{ANSI_NEWLINE}'
+        framedata += bytearray(row_str, 'utf-8')
+
+    return framedata + bytes(ANSI_CURSORUP(_h+1), "utf-8")
+
 def generate_framedata_c(
-        imgpath: pathlib.Path | str,
-        n_samples: int = 1
+        imgpath: pathlib.Path | str
     ) -> bytearray:
 
     framedata = bytearray("", "utf-8")
@@ -67,10 +82,8 @@ def generate_framedata_c(
 
     return framedata + bytes(ANSI_CURSORUP(_h+1), "utf-8")
 
-imgpaths = glob("C:\\Users\\Me\\Downloads\\testf\\*.jpg")
-frames = [generate_framedata_c(imgpath) for imgpath in imgpaths]
-
-frame = frames[0]
+frame = generate_framedata("C:\\Users\\Me\\Downloads\\testf\\frame_01_delay-0.1s.jpg")
+frames = [frame]
 
 while not _STOP:
     for frame in frames:
