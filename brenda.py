@@ -8,14 +8,14 @@ Can binarise sets of images to be displayed on BASH terminal.
 import numpy as np
 import os
 import pathlib
-from glob import glob
-from PIL import Image
+from PIL import Image, ImageTransform
 
 os.system("")
 
 _STOP = False
 
-_w, _h = 50, 30
+_w, _h = 30, 30
+_HW_STRETCH = 2
 
 ANSI_NEWLINE = "\012"
 ANSI_ESC = "\033"
@@ -45,7 +45,8 @@ class FrameData(bytes):
         framedata = bytearray("", "utf-8")
 
         with Image.open(imgpath) as image:
-            image = image.resize((_w, _h)).convert("L")
+            # bash chars are not square so image must be streched to keep visual proportion
+            image = image.resize((_w * _HW_STRETCH, _h)).convert("L")
             image_arr = np.array(image, dtype="uint8")
             
         for row in image_arr:
@@ -59,7 +60,8 @@ class FrameData(bytes):
         framedata = bytearray("", "utf-8")
 
         with Image.open(imgpath) as image:
-            image = image.resize((_w, _h))
+            # bash chars are not square so image must be streched to keep visual proportion
+            image = image.resize((_w * _HW_STRETCH, _h))
             image_arr = np.array(image, dtype="uint8")
             
         for row in image_arr:
@@ -67,40 +69,38 @@ class FrameData(bytes):
             framedata += bytearray(row_str, 'utf-8')
 
         return framedata + bytes(ANSI_CURSORUP(_h+1), "utf-8")
+    
+    @classmethod
+    def generate_from_array(cls, a: np.array) -> bytes:
+        framedata = bytearray("", "utf-8")
+        image = Image.fromarray(a).resize((_w, _h)).convert("L")
+        image_arr = np.array(image, dtype="uint8")
 
-def generate_framedata(
-        imgpath: pathlib.Path | str
-    ) -> bytearray:
+        for row in image_arr:
+            row_str = "".join(rgb_to_bash_bg((g, g, g), " ") for g in row) + f'{ANSI_ESC}[0m{ANSI_NEWLINE}'
+            framedata += bytearray(row_str, 'utf-8')
 
+        return framedata + bytes(ANSI_CURSORUP(_h+1), "utf-8")
+
+def generate_rect(x: int, y: int, size: tuple[int, int]) -> bytearray:
+    '''Generates framedata for a rect of given size at top-left coordinates (x, y)'''
+    global _w, _h
     framedata = bytearray("", "utf-8")
 
-    with Image.open(imgpath) as image:
-        image = image.resize((_w, _h)).convert("L")
-        image_arr = np.array(image, dtype="uint8")
-        
-    for row in image_arr:
+    canvas = np.zeros((_w, _h), dtype="uint8")
+    rect = np.ones(size, dtype="uint8") * 255
+    canvas[x:x+rect.shape[0], y:y+rect.shape[1]] = rect
+    canvas = canvas.transpose()
+            
+    for row in canvas:
         row_str = "".join(rgb_to_bash_bg((g, g, g), " ") for g in row) + f'{ANSI_ESC}[0m{ANSI_NEWLINE}'
         framedata += bytearray(row_str, 'utf-8')
 
     return framedata + bytes(ANSI_CURSORUP(_h+1), "utf-8")
 
-def generate_framedata_c(
-        imgpath: pathlib.Path | str
-    ) -> bytearray:
 
-    framedata = bytearray("", "utf-8")
 
-    with Image.open(imgpath) as image:
-        image = image.resize((_w, _h))
-        image_arr = np.array(image, dtype="uint8")
-        
-    for row in image_arr:
-        row_str = "".join(rgb_to_bash_bg(rgb, " ") for rgb in row) + f'{ANSI_ESC}[0m{ANSI_NEWLINE}'
-        framedata += bytearray(row_str, 'utf-8')
-
-    return framedata + bytes(ANSI_CURSORUP(_h+1), "utf-8")
-
-frame = generate_framedata("C:\\Users\\Me\\Downloads\\testf\\frame_01_delay-0.1s.jpg")
+frame = FrameData.generate_from_image("C:\\Users\\Me\\Pictures\\pixelbricks.jpg")
 frames = [frame]
 
 while not _STOP:
