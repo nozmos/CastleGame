@@ -15,7 +15,7 @@ os.system("")
 
 STOP = False
 
-SCREEN_W, SCREEN_H = 64, 64
+SCREEN_W, SCREEN_H = 64, 48
 HW_STRETCH = 2
 
 ANSI_NEWLINE = "\012"
@@ -24,17 +24,20 @@ ANSI_CURSORUP = lambda n: f"{ANSI_ESC}[{n}A"
 ANSI_HIDECURSOR = f"{ANSI_ESC}[?25l"
 ANSI_SHOWCURSOR = f"{ANSI_ESC}[?25h"
 
-CELL_SIZE = 64
+CELL_SIZE = 48
 RENDER_DISTANCE_GRID = 3
 RENDER_DISTANCE_WORLD = float(RENDER_DISTANCE_GRID * CELL_SIZE)
 
-CAMERA_DISTANCE_FACTOR: float = 16.0
+CAMERA_DISTANCE_FACTOR: float = 10.0
 
 FOV: float = np.pi
 CAM_FOV = FOV / CAMERA_DISTANCE_FACTOR
 
-with Image.open("C:\\Users\\Me\\Pictures\\pixelbricks.jpg") as img:
-    WALL_TEXTURE = img.resize((CELL_SIZE, CELL_SIZE)).convert("RGB").load()
+class CompassDirection:
+    NORTH = (0, -1)
+    EAST = (1, 0)
+    SOUTH = (0, 1)
+    WEST = (-1, 0)
 
 def rgb_to_bash_fg(rgb: tuple[int, int, int] | list[int, int, int], text: str) -> str:
     '''Returns `text` formatted for bash so that it prints with fg colour defined by `rgb`'''
@@ -144,21 +147,118 @@ def generate_rect(x: int, y: int, size: tuple[int, int]) -> bytearray:
 
     return framedata + bytes(ANSI_CURSORUP(SCREEN_H + 1), "utf-8")
 
+def shrink_image(source: Image.Image, new_size: tuple, origin: tuple=(0,0), mode: str="RGB", bg_colour: tuple=(0,0,0)) -> Image.Image:
+    new_width, new_height = int(new_size[0]), int(new_size[1])
+    shrink_x, shrink_y = new_size[0] / source.size[0], new_size[1] / source.size[1]
+    shrunk_pixels = source.copy().resize((new_width, new_height)).load()
+    
+    canvas = Image.new(mode, source.size, color=bg_colour)
+    canvas_pixels = canvas.load()
+
+    px = int( (1.0 - shrink_x) * float(origin[0]) ) 
+    py = int( (1.0 - shrink_y) * float(origin[1]) ) 
+
+    for i in range(px, min(px + new_width, source.size[0])):
+        for j in range(py, min(py + new_height, source.size[1])):
+            sx = i - px
+            sy = j - py
+            canvas_pixels[i, j] = shrunk_pixels[sx, sy]
+    return canvas
+
+def paste_image(source: Image.Image, target: Image.Image, xy: tuple) -> Image.Image:
+    source_copy, target_copy = source.copy(), target.copy()
+    source_map, target_map = source_copy.load(), target_copy.load()
+    tx, ty = xy
+    for i in range(tx, min(tx + source_copy.size[0], target_copy.size[0])):
+        for j in range(ty, min(ty + source_copy.size[1], target_copy.size[1])):
+            sx, sy = i - tx, j - ty
+            target_map[i, j] = source_map[sx, sy]
+    return target_copy
+
+def cellmap_to_raycast_image(
+            cellmap: list[str],
+            player_grid_xy: tuple,
+            view_angle: float,
+            viewport_width: int=SCREEN_W,
+            viewport_height: int=SCREEN_H,
+            fov: float=CAM_FOV,
+            raycast_step: float=0.1,
+            birds_eye: bool=False,
+        ) -> Image.Image:
+    global RENDER_DISTANCE_WORLD
+    if birds_eye:
+        raycast_view = cellmap_to_image(cellmap)
+        draw = ImageDraw.Draw(raycast_view)
+    
+    player_grid_x, player_grid_y = player_grid_xy
+    player_view = Image.new("RGB", (viewport_width, viewport_height))
+    player_view_pixels = player_view.load()
+
+    player_image_x, player_image_y = grid_to_world_coords(player_grid_x, player_grid_y)
+    player_unit_x, player_unit_y = math.cos(view_angle), math.sin(view_angle)
+    camera_x = player_image_x - player_unit_x * (float(viewport_width) / fov)
+    camera_y = player_image_y - player_unit_y * (float(viewport_width) / fov)
+
+    # cast rays to find walls
+    for screen_x in range(viewport_width):
+        p = math.sin(0.5 * math.pi * float(screen_x) / float(viewport_width)) ** 2
+        ray_angle = (view_angle - (fov / 2.0)) + (fov * p)
+        unit_x, unit_y = math.cos(ray_angle), math.sin(ray_angle)
+        
+        distance_to_wall = 0.0
+        hit_wall = False
+
+        while (not hit_wall) and distance_to_wall < RENDER_DISTANCE_WORLD:
+            distance_to_wall += raycast_step
+
+            test_world_x = camera_x + unit_x * (float(viewport_width) / fov + distance_to_wall)
+            test_world_y = camera_y + unit_y * (float(viewport_width) / fov + distance_to_wall)
+            test_grid_x, test_grid_y = world_to_grid_coords(test_world_x, test_world_y)
+            
+            if test_grid_x < 0 or test_grid_x > _grid_w or test_grid_y < 0 or test_grid_y > _grid_h:
+                distance_to_wall = RENDER_DISTANCE_WORLD
+                hit_wall = True
+            elif cellmap[test_grid_y][test_grid_x] == "1":
+                hit_wall = True
+
+        if birds_eye:
+            draw.line((
+                camera_x + unit_x * (float(viewport_width) / fov),
+                camera_y + unit_y * (float(viewport_width) / fov),
+                camera_x + unit_x * (float(viewport_width) / fov + distance_to_wall),
+                camera_y + unit_y * (float(viewport_width) / fov + distance_to_wall)
+            ), fill=(255,0,0))
+
+        else:
+            ceiling = float(viewport_height) * (1.0 - 1.3 / (1.0 + fov * distance_to_wall / (viewport_width)) )
+            floor = viewport_height - ceiling
+
+            for screen_y in range(viewport_height):
+                if screen_y < ceiling:
+                    player_view_pixels[screen_x, screen_y] = (0, 0, 0)
+                elif screen_y < floor:
+                    v = max(0, int(255 * ((RENDER_DISTANCE_WORLD - distance_to_wall) / RENDER_DISTANCE_WORLD) ** 2.0) )
+                    player_view_pixels[screen_x, screen_y] = (v, v, v)
+                else:
+                    player_view_pixels[screen_x, screen_y] = (50, 50, 50)
+        
+    return raycast_view if birds_eye else player_view
+
+
+
 ####################################
 
 example_worldmap = [
     "11111",
-    "11011",
     "10001",
-    "11011",
     "11111"
 ]
 
 _grid_w, _grid_h = get_grid_size(example_worldmap)
 _world_w, _world_h = CELL_SIZE * _grid_w, CELL_SIZE * _grid_h
 
-_player_grid_x: int = 2
-_player_grid_y: int = 2
+_player_grid_x: int = 1
+_player_grid_y: int = 1
 _player_angle: float = 0.0
 
 print(ANSI_HIDECURSOR, end="")
@@ -167,71 +267,20 @@ print(ANSI_HIDECURSOR, end="")
 while not STOP:
     
     try:
-
-        world_img = cellmap_to_image(example_worldmap)
-        world_img_pixels = world_img.load()
-        draw = ImageDraw.Draw(world_img)
-
-        player_view = Image.new("RGB", (SCREEN_W, SCREEN_H))
-        player_view_pixels = player_view.load()
-
-        player_image_x, player_image_y = grid_to_world_coords(_player_grid_x, _player_grid_y)
-        player_unit_x, player_unit_y = math.cos(_player_angle), math.sin(_player_angle)
-        camera_x = player_image_x - player_unit_x * float(SCREEN_W) / CAM_FOV
-        camera_y = player_image_y - player_unit_y * float(SCREEN_W) / CAM_FOV
-
-        # cast rays to find walls
-        for screen_x in range(SCREEN_W):
-            p = math.sin(0.5 * math.pi * float(screen_x) / float(SCREEN_W)) ** 2
-            ray_angle = (_player_angle - (CAM_FOV / 2.0)) + (CAM_FOV * p)
-            unit_x, unit_y = math.cos(ray_angle), math.sin(ray_angle)
-            
-            distance_to_wall = 0.0
-            hit_wall = False
-
-            while (not hit_wall) and distance_to_wall < RENDER_DISTANCE_WORLD:
-                distance_to_wall += 0.1
-
-                test_world_x = camera_x + unit_x * (float(SCREEN_W) / CAM_FOV + distance_to_wall)
-                test_world_y = camera_y + unit_y * (float(SCREEN_W) / CAM_FOV + distance_to_wall)
-                test_grid_x, test_grid_y = world_to_grid_coords(test_world_x, test_world_y)
-                
-                if test_grid_x < 0 or test_grid_x > _grid_w or test_grid_y < 0 or test_grid_y > _grid_h:
-                    distance_to_wall = RENDER_DISTANCE_WORLD
-                    hit_wall = True
-                elif example_worldmap[test_grid_y][test_grid_x] == "1":
-                    hit_wall = True
-
-            draw.line((
-                camera_x + unit_x * float(SCREEN_W) / CAM_FOV,
-                camera_y + unit_y * float(SCREEN_W) / CAM_FOV,
-                camera_x + unit_x * (float(SCREEN_W) / CAM_FOV + distance_to_wall),
-                camera_y + unit_y * (float(SCREEN_W) / CAM_FOV + distance_to_wall)
-            ), fill=(255,0,0))
-
-            ceiling = float(SCREEN_H) * (1.0 - 1.0 / (1.0 + CAM_FOV * distance_to_wall / (SCREEN_W)) )
-            floor = SCREEN_H - ceiling
-
-            for screen_y in range(SCREEN_H):
-                if screen_y < ceiling:
-                    player_view_pixels[screen_x, screen_y] = (0, 0, 0)
-                elif screen_y < floor:
-                    v = max(0, int(255 * ((RENDER_DISTANCE_WORLD - distance_to_wall) / RENDER_DISTANCE_WORLD) ** 2.0) )
-                    player_view_pixels[screen_x, screen_y] = (v, v, v)
-                else:
-                    player_view_pixels[screen_x, screen_y] = (50, 50, 50)
-
-        # frame = FrameData.generate_from_image_c(world_img.resize((SCREEN_W, SCREEN_H)))
-        frame = FrameData.generate_from_image_c(player_view)
+        viewport_image = cellmap_to_raycast_image(
+            example_worldmap, (_player_grid_x, _player_grid_y), _player_angle,
+            viewport_width=48, viewport_height=48
+        )
+        frame = FrameData.generate_from_image_c(viewport_image)
         
         print(frame.decode())
 
-        # os.system("bash -c 'read -rn1'")
+        # os.system("bash -c 'read -rsn1'")
     
     except KeyboardInterrupt:
         STOP = True
     
-    _player_angle += 0.05
+    _player_angle += 0.04
 
 print(ANSI_NEWLINE * (SCREEN_H-1))
 print(ANSI_SHOWCURSOR)
