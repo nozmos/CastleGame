@@ -5,13 +5,13 @@
 
 Renders images to bash terminal using UTF-8 characters with ANSI sequences.
 '''
+import curses
+from dataclasses import dataclass
 import math
 import numpy as np
 import os
 import pathlib
 from PIL import Image, ImageDraw
-
-os.system("")
 
 STOP = False
 
@@ -259,28 +259,68 @@ _world_w, _world_h = CELL_SIZE * _grid_w, CELL_SIZE * _grid_h
 
 _player_grid_x: int = 1
 _player_grid_y: int = 1
-_player_angle: float = 0.0
 
-print(ANSI_HIDECURSOR, end="")
+@dataclass
+class State:
+    player_angle: float = 0.0
 
-# Game Loop
-while not STOP:
-    
-    try:
-        viewport_image = cellmap_to_raycast_image(
-            example_worldmap, (_player_grid_x, _player_grid_y), _player_angle,
-            viewport_width=48, viewport_height=48
-        )
-        frame = FrameData.generate_from_image_c(viewport_image)
+
+def update(prev_state: State, delta_time: int, keys: list[int]):
+    # TODO: take into account delta time
+    return State(
+        player_angle=prev_state.player_angle + 0.04
+    )
+
+
+def render(screen: curses.window, state: State, height: int, width: int):
+    viewport_image = cellmap_to_raycast_image(
+        example_worldmap, (_player_grid_x, _player_grid_y), state.player_angle,
+        viewport_width=width, viewport_height=height
+    )
+    image_arr = np.array(viewport_image.convert("L"), dtype="uint8")
+    for y, row in enumerate(image_arr):
+        for x, colour in enumerate(row):
+            try:
+                # screen.addstr(y, x, rgb_to_bash_bg((colour, colour, colour), " "))
+                screen.addstr(y, x, " ", curses.color_pair(1))
+            except curses.error:
+                pass
+
+
+def main(screen: curses.window):
+    curses.init_pair(1, curses.COLOR_RED, curses.COLOR_WHITE)
+    # make cursor invisible
+    curses.curs_set(0)
+    curses.resizeterm(SCREEN_H, SCREEN_W)
+    screen.refresh()
+    screen.clear()
+    # nodelay makes getch non-blocking (i.e. it doesn't wait until a key is pressed)
+    # which is more like how things work in game programming normally
+    # https://stackoverflow.com/questions/22362076/how-to-detect-curses-alt-key-combinations-in-python
+    screen.nodelay(True)
+
+    state = State()
+    # FIXME: dynamic size: currently cellmap_to_raycast_image raises an exception
+    # if the size is different. Need to fix that
+    height, width = SCREEN_H, SCREEN_W
+
+    # Game Loop
+    while True:
+        try:
+            # keys currently being pressed in this frame
+            keys = []
+            while (key := screen.getch()) != curses.ERR:
+                keys.append(key)
+
+            state = update(state, None, keys)
+            render(screen, state, height, width)
+            
+            screen.refresh()
+            
+        except KeyboardInterrupt:
+            break
         
-        print(frame.decode())
 
-        # os.system("bash -c 'read -rsn1'")
-    
-    except KeyboardInterrupt:
-        STOP = True
-    
-    _player_angle += 0.04
 
-print(ANSI_NEWLINE * (SCREEN_H-1))
-print(ANSI_SHOWCURSOR)
+if __name__ == "__main__":
+    curses.wrapper(main)
