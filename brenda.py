@@ -14,6 +14,7 @@ import numpy as np
 import os
 import pathlib
 from PIL import Image, ImageDraw
+from pynput import keyboard
 
 STOP = False
 
@@ -267,12 +268,12 @@ class State:
     player_angle: float = 0.0
 
 
-def update(prev_state: State, delta_time: int, key: Keystroke):
+def update(prev_state: State, delta_time: int, keys: set[keyboard.Key]):
     # TODO: take into account delta time
     new_player_angle = prev_state.player_angle
-    if key.lower() == "a":
+    if any(key.char == "a" for key in keys):
         new_player_angle -= 0.04
-    if key.lower() == "d":
+    if any(key.char == "d" for key in keys):
         new_player_angle += 0.04
 
     return State(
@@ -295,15 +296,21 @@ def render(term: blessed.Terminal, state: State, height: int, width: int):
 
 def main(term: blessed.Terminal):
     # assert term.number_of_colors == 1 << 24
-    with term.raw(), term.hidden_cursor(), term.fullscreen():
+    with term.raw(), term.hidden_cursor(), term.fullscreen(), keyboard.Events() as event_provider:
         state = State()
         # Game Loop
+        keys_down = set()
         while True:
-            key = term.inkey(0, 0)
-            # keys currently being pressed in this frame
-            state = update(state, None, key)
+            while (event := event_provider.get(0)) is not None:
+                # assumes events come in time order
+                if isinstance(event, keyboard.Events.Press):
+                    keys_down.add(event.key)
+                elif isinstance(event, keyboard.Events.Release):
+                    keys_down.remove(event.key)
+            
+            state = update(state, None, keys_down)
             render(term, state, SCREEN_H, SCREEN_W)
-            if key == u'\x03':
+            if keyboard.Key.ctrl in keys_down and any(key.char == "c" for key in keys_down):
                 break
 
 
