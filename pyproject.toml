@@ -11,6 +11,7 @@ numpy = "^1.26.4"
 pillow = "^10.3.0"
 # TODO: test & add windows-curses
 blessed = "^1.20.0"
+pynput = "^1.7.6"
 
 [tool.poetry.dev-dependencies]
 
