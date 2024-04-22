@@ -5,20 +5,22 @@
 
 Renders images to bash terminal using UTF-8 characters with ANSI sequences.
 '''
+from dataclasses import dataclass
 import math
+import time
+import blessed
+from blessed.keyboard import Keystroke
 import numpy as np
 import os
 import pathlib
 from PIL import Image, ImageDraw
-
-os.system("")
 
 STOP = False
 
 SCREEN_W, SCREEN_H = 64, 48
 HW_STRETCH = 2
 
-ANSI_NEWLINE = "\012"
+ANSI_NEWLINE = "\r\n"
 ANSI_ESC = "\033"
 ANSI_CURSORUP = lambda n: f"{ANSI_ESC}[{n}A"
 ANSI_HIDECURSOR = f"{ANSI_ESC}[?25l"
@@ -259,28 +261,51 @@ _world_w, _world_h = CELL_SIZE * _grid_w, CELL_SIZE * _grid_h
 
 _player_grid_x: int = 1
 _player_grid_y: int = 1
-_player_angle: float = 0.0
 
-print(ANSI_HIDECURSOR, end="")
+@dataclass
+class State:
+    player_angle: float = 0.0
 
-# Game Loop
-while not STOP:
-    
-    try:
-        viewport_image = cellmap_to_raycast_image(
-            example_worldmap, (_player_grid_x, _player_grid_y), _player_angle,
-            viewport_width=48, viewport_height=48
-        )
-        frame = FrameData.generate_from_image_c(viewport_image)
-        
-        print(frame.decode())
 
-        # os.system("bash -c 'read -rsn1'")
-    
-    except KeyboardInterrupt:
-        STOP = True
-    
-    _player_angle += 0.04
+def update(prev_state: State, delta_time: int, key: Keystroke):
+    # TODO: take into account delta time
+    new_player_angle = prev_state.player_angle
+    if key.lower() == "a":
+        new_player_angle -= 0.04
+    if key.lower() == "d":
+        new_player_angle += 0.04
 
-print(ANSI_NEWLINE * (SCREEN_H-1))
-print(ANSI_SHOWCURSOR)
+    return State(
+        player_angle=new_player_angle
+    )
+
+
+def render(term: blessed.Terminal, state: State, height: int, width: int):
+    viewport_image = cellmap_to_raycast_image(
+        example_worldmap, (_player_grid_x, _player_grid_y), state.player_angle,
+        viewport_width=width, viewport_height=height
+    )
+    # image_arr = np.array(viewport_image.convert("L"), dtype="uint8")
+    # for y, row in enumerate(image_arr):
+    #     for x, colour in enumerate(row):
+    frame = FrameData.generate_from_image(viewport_image)
+    print(term.move_xy(0, 0) + frame.decode())
+    print(term.move_xy(0, 0) + str(time.time()))
+
+
+def main(term: blessed.Terminal):
+    # assert term.number_of_colors == 1 << 24
+    with term.raw(), term.hidden_cursor(), term.fullscreen():
+        state = State()
+        # Game Loop
+        while True:
+            key = term.inkey(0, 0)
+            # keys currently being pressed in this frame
+            state = update(state, None, key)
+            render(term, state, SCREEN_H, SCREEN_W)
+            if key == u'\x03':
+                break
+
+
+if __name__ == "__main__":
+    exit(main(blessed.Terminal()))
