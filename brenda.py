@@ -5,9 +5,11 @@
 
 Renders images to bash terminal using UTF-8 characters with ANSI sequences.
 '''
-import curses
 from dataclasses import dataclass
 import math
+import time
+import blessed
+from blessed.keyboard import Keystroke
 import numpy as np
 import os
 import pathlib
@@ -18,7 +20,7 @@ STOP = False
 SCREEN_W, SCREEN_H = 64, 48
 HW_STRETCH = 2
 
-ANSI_NEWLINE = "\012"
+ANSI_NEWLINE = "\r\n"
 ANSI_ESC = "\033"
 ANSI_CURSORUP = lambda n: f"{ANSI_ESC}[{n}A"
 ANSI_HIDECURSOR = f"{ANSI_ESC}[?25l"
@@ -265,62 +267,45 @@ class State:
     player_angle: float = 0.0
 
 
-def update(prev_state: State, delta_time: int, keys: list[int]):
+def update(prev_state: State, delta_time: int, key: Keystroke):
     # TODO: take into account delta time
+    new_player_angle = prev_state.player_angle
+    if key.lower() == "a":
+        new_player_angle -= 0.04
+    if key.lower() == "d":
+        new_player_angle += 0.04
+
     return State(
-        player_angle=prev_state.player_angle + 0.04
+        player_angle=new_player_angle
     )
 
 
-def render(screen: curses.window, state: State, height: int, width: int):
+def render(term: blessed.Terminal, state: State, height: int, width: int):
     viewport_image = cellmap_to_raycast_image(
         example_worldmap, (_player_grid_x, _player_grid_y), state.player_angle,
         viewport_width=width, viewport_height=height
     )
-    image_arr = np.array(viewport_image.convert("L"), dtype="uint8")
-    for y, row in enumerate(image_arr):
-        for x, colour in enumerate(row):
-            try:
-                # screen.addstr(y, x, rgb_to_bash_bg((colour, colour, colour), " "))
-                screen.addstr(y, x, " ", curses.color_pair(1))
-            except curses.error:
-                pass
+    # image_arr = np.array(viewport_image.convert("L"), dtype="uint8")
+    # for y, row in enumerate(image_arr):
+    #     for x, colour in enumerate(row):
+    frame = FrameData.generate_from_image(viewport_image)
+    print(term.move_xy(0, 0) + frame.decode())
+    print(term.move_xy(0, 0) + str(time.time()))
 
 
-def main(screen: curses.window):
-    curses.init_pair(1, curses.COLOR_RED, curses.COLOR_WHITE)
-    # make cursor invisible
-    curses.curs_set(0)
-    curses.resizeterm(SCREEN_H, SCREEN_W)
-    screen.refresh()
-    screen.clear()
-    # nodelay makes getch non-blocking (i.e. it doesn't wait until a key is pressed)
-    # which is more like how things work in game programming normally
-    # https://stackoverflow.com/questions/22362076/how-to-detect-curses-alt-key-combinations-in-python
-    screen.nodelay(True)
-
-    state = State()
-    # FIXME: dynamic size: currently cellmap_to_raycast_image raises an exception
-    # if the size is different. Need to fix that
-    height, width = SCREEN_H, SCREEN_W
-
-    # Game Loop
-    while True:
-        try:
+def main(term: blessed.Terminal):
+    # assert term.number_of_colors == 1 << 24
+    with term.raw(), term.hidden_cursor(), term.fullscreen():
+        state = State()
+        # Game Loop
+        while True:
+            key = term.inkey(0, 0)
             # keys currently being pressed in this frame
-            keys = []
-            while (key := screen.getch()) != curses.ERR:
-                keys.append(key)
-
-            state = update(state, None, keys)
-            render(screen, state, height, width)
-            
-            screen.refresh()
-            
-        except KeyboardInterrupt:
-            break
-        
+            state = update(state, None, key)
+            render(term, state, SCREEN_H, SCREEN_W)
+            if key == u'\x03':
+                break
 
 
 if __name__ == "__main__":
-    curses.wrapper(main)
+    exit(main(blessed.Terminal()))
