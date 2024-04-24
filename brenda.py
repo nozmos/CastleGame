@@ -13,8 +13,11 @@ from blessed.keyboard import Keystroke
 import numpy as np
 import os
 import pathlib
+import sys
 from PIL import Image, ImageDraw
 from pynput import keyboard
+
+np.set_printoptions(threshold=sys.maxsize)
 
 STOP = False
 
@@ -39,12 +42,6 @@ CAM_FOV = FOV / CAMERA_DISTANCE_FACTOR
 MOVE_SPEED: float = 10.0
 TURN_SPEED: float = 0.2
 
-class CompassDirection:
-    NORTH = (0, -1)
-    EAST = (1, 0)
-    SOUTH = (0, 1)
-    WEST = (-1, 0)
-
 def rgb_to_bash_fg(rgb: tuple[int, int, int] | list[int, int, int], text: str) -> str:
     '''Returns `text` formatted for bash so that it prints with fg colour defined by `rgb`'''
     return '\033[38;2;%d;%d;%dm%s\033[0m' % (*rgb, text)
@@ -66,11 +63,23 @@ def cellmap_to_image(cellmap: list[str]) -> Image.Image:
                 pixels[i, j] = (0, 0, 0)
     return img
 
+def worldmap_to_image(worldmap: np.array) -> Image.Image:
+    img_h, img_w = worldmap.shape
+    img = Image.new("RGB", (img_w, img_h))
+    pixels = img.load()
+    for i in range(img_w):
+        for j in range(img_h):
+            if worldmap[j][i] == 1:
+                pixels[i, j] = (255, 255, 255)
+            else:
+                pixels[i, j] = (0, 0, 0)
+    return img
+
 def grid_to_world_coords(grid_x: int, grid_y: int) -> tuple:
     return CELL_SIZE * (grid_x + 0.5), CELL_SIZE * (grid_y + 0.5)
 
 def world_to_grid_coords(world_x: int, world_y: int) -> tuple:
-    return int(world_x / CELL_SIZE), int(world_y / CELL_SIZE)
+    return math.floor(world_x / CELL_SIZE), math.floor(world_y / CELL_SIZE)
 
 def get_grid_size(cellmap: list[str]) -> tuple:
     return CELL_SIZE * max(len(row) for row in cellmap), CELL_SIZE * len(cellmap)
@@ -181,6 +190,90 @@ def paste_image(source: Image.Image, target: Image.Image, xy: tuple) -> Image.Im
             target_map[i, j] = source_map[sx, sy]
     return target_copy
 
+def cellmap_to_worldmap(cellmap: list[str]) -> np.array:
+    return np.concatenate(      # concatenate rows into full worldmap
+        [
+            np.concatenate(     # concatenate expanded cells into rows
+                [
+                    np.array([  # expand single cells into (CELLSIZE x CELLSIZE) arrays
+                        [ int(cell) for _ in range(CELL_SIZE) ]
+                        for _ in range(CELL_SIZE)
+                    ]) for cell in cellrow
+                ], axis=1
+            ) for cellrow in cellmap
+        ], axis=0
+    )
+
+def worldmap_to_raycast_image(
+            worldmap: np.array,
+            player_world_xy: tuple,
+            view_angle: float,
+            viewport_width: int=SCREEN_W,
+            viewport_height: int=SCREEN_H,
+            fov: float=np.pi/2,
+            raycast_step: float=0.1,
+            birds_eye: bool=False,
+        ) -> Image.Image:
+    global RENDER_DISTANCE_WORLD
+    if birds_eye:
+        raycast_view = worldmap_to_image(worldmap)
+        draw = ImageDraw.Draw(raycast_view)
+    
+    player_world_x, player_world_y = player_world_xy
+    player_view = Image.new("RGB", (viewport_width, viewport_height))
+    player_view_pixels = player_view.load()
+
+    player_unit_x, player_unit_y = math.cos(view_angle), math.sin(view_angle)
+    camera_x = player_world_x - player_unit_x * (float(viewport_width) / fov)
+    camera_y = player_world_y - player_unit_y * (float(viewport_width) / fov)
+
+    world_h, world_w = worldmap.shape
+
+    # cast rays to find walls
+    for screen_x in range(viewport_width):
+        p = math.sin(0.5 * math.pi * float(screen_x) / float(viewport_width)) ** 2
+        ray_angle = (view_angle - (fov / 2.0)) + (fov * p)
+        unit_x, unit_y = math.cos(ray_angle), math.sin(ray_angle)
+        
+        distance_to_wall = 0.0
+        hit_wall = False
+
+        while (not hit_wall) and distance_to_wall < RENDER_DISTANCE_WORLD:
+            distance_to_wall += raycast_step
+
+            test_world_x = camera_x + unit_x * (float(viewport_width) / fov + distance_to_wall)
+            test_world_y = camera_y + unit_y * (float(viewport_width) / fov + distance_to_wall)
+            
+            if test_world_x < 0 or test_world_x > world_h or test_world_y < 0 or test_world_y > world_w:
+                distance_to_wall = RENDER_DISTANCE_WORLD
+                hit_wall = True
+            elif worldmap[math.floor(test_world_y)][math.floor(test_world_x)] == 1:
+                hit_wall = True
+
+        if birds_eye:
+            draw.line((
+                camera_x + unit_x * (float(viewport_width) / fov),
+                camera_y + unit_y * (float(viewport_width) / fov),
+                camera_x + unit_x * (float(viewport_width) / fov + distance_to_wall),
+                camera_y + unit_y * (float(viewport_width) / fov + distance_to_wall)
+            ), fill=(255,0,0))
+
+        else:
+            ceiling = float(viewport_height) * (1.0 - 1.3 / (1.0 + fov * distance_to_wall / (viewport_width)) )
+            floor = viewport_height - ceiling
+
+            for screen_y in range(viewport_height):
+                if screen_y < ceiling:
+                    player_view_pixels[screen_x, screen_y] = (0, 0, 0)
+                elif screen_y < floor:
+                    v = max(0, int(255 * ((RENDER_DISTANCE_WORLD - distance_to_wall) / RENDER_DISTANCE_WORLD) ** 1.0) )
+                    player_view_pixels[screen_x, screen_y] = (v, v, v)
+                else:
+                    player_view_pixels[screen_x, screen_y] = (50, 50, 50)
+        
+    return raycast_view if birds_eye else player_view
+
+
 def cellmap_to_raycast_image(
             cellmap: list[str],
             player_world_xy: tuple,
@@ -200,7 +293,6 @@ def cellmap_to_raycast_image(
     player_view = Image.new("RGB", (viewport_width, viewport_height))
     player_view_pixels = player_view.load()
 
-    # player_image_x, player_image_y = grid_to_world_coords(player_grid_x, player_grid_y)
     player_unit_x, player_unit_y = math.cos(view_angle), math.sin(view_angle)
     camera_x = player_world_x - player_unit_x * (float(viewport_width) / fov)
     camera_y = player_world_y - player_unit_y * (float(viewport_width) / fov)
@@ -254,7 +346,7 @@ def cellmap_to_raycast_image(
 
 ####################################
 
-example_worldmap = [
+example_cellmap = [
     "11111",
     "10001",
     "10101",
@@ -262,7 +354,9 @@ example_worldmap = [
     "11111",
 ]
 
-_grid_w, _grid_h = get_grid_size(example_worldmap)
+example_worldmap = cellmap_to_worldmap(example_cellmap)
+
+_grid_w, _grid_h = get_grid_size(example_cellmap)
 _world_w, _world_h = CELL_SIZE * _grid_w, CELL_SIZE * _grid_h
 
 _player_grid_x: int = 1
@@ -304,7 +398,7 @@ def update(prev_state: State, delta_time: int, keys: set[keyboard.Key]):
 
 
 def render(term: blessed.Terminal, state: State, height: int, width: int):
-    viewport_image = cellmap_to_raycast_image(
+    viewport_image = worldmap_to_raycast_image(
         example_worldmap, (state.player_world_x, state.player_world_y), state.player_angle,
         viewport_width=width, viewport_height=height
     )
@@ -315,10 +409,12 @@ def render(term: blessed.Terminal, state: State, height: int, width: int):
 
 def main(term: blessed.Terminal):
     # assert term.number_of_colors == 1 << 24
+
     with term.raw(), term.hidden_cursor(), term.fullscreen(), keyboard.Events() as event_provider:
         state = State()
         # Game Loop
         keys_down = set()
+        dt = time.time()
         while True:
             while (event := event_provider.get(0)) is not None:
                 # assumes events come in time order
@@ -327,7 +423,7 @@ def main(term: blessed.Terminal):
                 elif isinstance(event, keyboard.Events.Release):
                     keys_down.remove(event.key)
             
-            state = update(state, None, keys_down)
+            state = update(state, dt - time.time(), keys_down)
             render(term, state, SCREEN_H, SCREEN_W)
 
             if keyboard.Key.esc in keys_down:
