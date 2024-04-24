@@ -27,14 +27,17 @@ ANSI_CURSORUP = lambda n: f"{ANSI_ESC}[{n}A"
 ANSI_HIDECURSOR = f"{ANSI_ESC}[?25l"
 ANSI_SHOWCURSOR = f"{ANSI_ESC}[?25h"
 
-CELL_SIZE = 48
-RENDER_DISTANCE_GRID = 3
+CELL_SIZE = 64
+RENDER_DISTANCE_GRID = 4
 RENDER_DISTANCE_WORLD = float(RENDER_DISTANCE_GRID * CELL_SIZE)
 
-CAMERA_DISTANCE_FACTOR: float = 10.0
+CAMERA_DISTANCE_FACTOR: float = 16.0
 
 FOV: float = np.pi
 CAM_FOV = FOV / CAMERA_DISTANCE_FACTOR
+
+MOVE_SPEED: float = 10.0
+TURN_SPEED: float = 0.2
 
 class CompassDirection:
     NORTH = (0, -1)
@@ -180,7 +183,7 @@ def paste_image(source: Image.Image, target: Image.Image, xy: tuple) -> Image.Im
 
 def cellmap_to_raycast_image(
             cellmap: list[str],
-            player_grid_xy: tuple,
+            player_world_xy: tuple,
             view_angle: float,
             viewport_width: int=SCREEN_W,
             viewport_height: int=SCREEN_H,
@@ -193,14 +196,14 @@ def cellmap_to_raycast_image(
         raycast_view = cellmap_to_image(cellmap)
         draw = ImageDraw.Draw(raycast_view)
     
-    player_grid_x, player_grid_y = player_grid_xy
+    player_world_x, player_world_y = player_world_xy
     player_view = Image.new("RGB", (viewport_width, viewport_height))
     player_view_pixels = player_view.load()
 
-    player_image_x, player_image_y = grid_to_world_coords(player_grid_x, player_grid_y)
+    # player_image_x, player_image_y = grid_to_world_coords(player_grid_x, player_grid_y)
     player_unit_x, player_unit_y = math.cos(view_angle), math.sin(view_angle)
-    camera_x = player_image_x - player_unit_x * (float(viewport_width) / fov)
-    camera_y = player_image_y - player_unit_y * (float(viewport_width) / fov)
+    camera_x = player_world_x - player_unit_x * (float(viewport_width) / fov)
+    camera_y = player_world_y - player_unit_y * (float(viewport_width) / fov)
 
     # cast rays to find walls
     for screen_x in range(viewport_width):
@@ -240,7 +243,7 @@ def cellmap_to_raycast_image(
                 if screen_y < ceiling:
                     player_view_pixels[screen_x, screen_y] = (0, 0, 0)
                 elif screen_y < floor:
-                    v = max(0, int(255 * ((RENDER_DISTANCE_WORLD - distance_to_wall) / RENDER_DISTANCE_WORLD) ** 2.0) )
+                    v = max(0, int(255 * ((RENDER_DISTANCE_WORLD - distance_to_wall) / RENDER_DISTANCE_WORLD) ** 1.0) )
                     player_view_pixels[screen_x, screen_y] = (v, v, v)
                 else:
                     player_view_pixels[screen_x, screen_y] = (50, 50, 50)
@@ -254,7 +257,9 @@ def cellmap_to_raycast_image(
 example_worldmap = [
     "11111",
     "10001",
-    "11111"
+    "10101",
+    "10001",
+    "11111",
 ]
 
 _grid_w, _grid_h = get_grid_size(example_worldmap)
@@ -262,33 +267,47 @@ _world_w, _world_h = CELL_SIZE * _grid_w, CELL_SIZE * _grid_h
 
 _player_grid_x: int = 1
 _player_grid_y: int = 1
+_player_world_x: float = (_player_grid_x + 0.5) * float(CELL_SIZE)
+_player_world_y: float = (_player_grid_y + 0.5) * float(CELL_SIZE)
 
 @dataclass
 class State:
     player_angle: float = 0.0
-
+    player_world_x: float = 1.5 * float(CELL_SIZE)
+    player_world_y: float = 1.5 * float(CELL_SIZE)
 
 def update(prev_state: State, delta_time: int, keys: set[keyboard.Key]):
     # TODO: take into account delta time
     new_player_angle = prev_state.player_angle
-    if any(key.char == "a" for key in keys):
-        new_player_angle -= 0.04
-    if any(key.char == "d" for key in keys):
-        new_player_angle += 0.04
+    new_player_world_x = prev_state.player_world_x
+    new_player_world_y = prev_state.player_world_y
+    try:
+        if any(key.char == "a" for key in keys):
+            new_player_angle -= TURN_SPEED
+        if any(key.char == "d" for key in keys):
+            new_player_angle += TURN_SPEED
+        if any(key.char == "w" for key in keys):
+            new_player_world_x += MOVE_SPEED * math.cos(new_player_angle)
+            new_player_world_y += MOVE_SPEED * math.sin(new_player_angle)
+        if any(key.char == "s" for key in keys):
+            new_player_world_x -= MOVE_SPEED * math.cos(new_player_angle)
+            new_player_world_y -= MOVE_SPEED * math.sin(new_player_angle)
+    
+    except AttributeError:
+        pass
 
     return State(
-        player_angle=new_player_angle
+        player_angle=new_player_angle,
+        player_world_x=new_player_world_x,
+        player_world_y=new_player_world_y,
     )
 
 
 def render(term: blessed.Terminal, state: State, height: int, width: int):
     viewport_image = cellmap_to_raycast_image(
-        example_worldmap, (_player_grid_x, _player_grid_y), state.player_angle,
+        example_worldmap, (state.player_world_x, state.player_world_y), state.player_angle,
         viewport_width=width, viewport_height=height
     )
-    # image_arr = np.array(viewport_image.convert("L"), dtype="uint8")
-    # for y, row in enumerate(image_arr):
-    #     for x, colour in enumerate(row):
     frame = FrameData.generate_from_image(viewport_image)
     print(term.move_xy(0, 0) + frame.decode())
     print(term.move_xy(0, 0) + str(time.time()))
@@ -310,7 +329,8 @@ def main(term: blessed.Terminal):
             
             state = update(state, None, keys_down)
             render(term, state, SCREEN_H, SCREEN_W)
-            if keyboard.Key.ctrl in keys_down and any(key.char == "c" for key in keys_down):
+
+            if keyboard.Key.esc in keys_down:
                 break
 
 
