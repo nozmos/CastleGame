@@ -295,9 +295,11 @@ def worldmap_to_raycast_image(
             perp_view_to_wall_dist = distance_to_wall * math.cos(dev_angle) - distance_to_viewport
             try:
                 wall_height = min(viewport_height, viewport_height * CELL_SIZE / (2 * perp_view_to_wall_dist * math.tan(fov / 2.0)))
+                if wall_height < 0:
+                    wall_height = viewport_height
             except ZeroDivisionError:
                 wall_height = viewport_height
-            ceiling = 0.5 * (float(viewport_height) - wall_height)
+            ceiling = min( float(viewport_height) / 2.0, 0.5 * (float(viewport_height) - wall_height) )
             floor = viewport_height - ceiling
 
             for screen_y in range(viewport_height):
@@ -499,7 +501,7 @@ def render(term: blessed.Terminal, state: State, height: int, width: int):
     player_world_xy = (state.player_world_x, state.player_world_y)
     viewport_image = worldmap_to_raycast_image(
         example_worldmap, player_world_xy, state.player_angle,
-        viewport_width=64, viewport_height=48,
+        viewport_width=48, viewport_height=48,
         raycast_step=1.0, #birds_eye=True
     )
     frame = FrameData.generate_from_image_c(viewport_image)
