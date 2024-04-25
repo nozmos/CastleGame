@@ -31,7 +31,7 @@ ANSI_HIDECURSOR = f"{ANSI_ESC}[?25l"
 ANSI_SHOWCURSOR = f"{ANSI_ESC}[?25h"
 
 CELL_SIZE = 64
-RENDER_DISTANCE_GRID = 10
+RENDER_DISTANCE_GRID = 5
 RENDER_DISTANCE_WORLD = float(RENDER_DISTANCE_GRID * CELL_SIZE)
 
 FOV: float = np.pi / 3.0
@@ -302,7 +302,7 @@ def worldmap_to_raycast_image(
                 if screen_y < ceiling:
                     player_view_pixels[screen_x, screen_y] = (0, 0, 0)
                 elif screen_y < floor:
-                    v = max( 0, int(255 * wall_height / viewport_height) )
+                    v = max( 0, int(255 * (1.0 - distance_to_wall / RENDER_DISTANCE_WORLD)) )
                     player_view_pixels[screen_x, screen_y] = (v, v, v)
                 else:
                     player_view_pixels[screen_x, screen_y] = (50, 50, 50)
