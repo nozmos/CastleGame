@@ -240,7 +240,7 @@ def raycast(
         test_world_x = obj_x + unit_x * distance_to_wall
         test_world_y = obj_y + unit_y * distance_to_wall
         
-        if test_world_x < 0 or test_world_x > world_h or test_world_y < 0 or test_world_y > world_w:
+        if test_world_x < 0 or test_world_x > world_w or test_world_y < 0 or test_world_y > world_h:
             distance_to_wall = RENDER_DISTANCE_WORLD
             break
         elif worldmap[math.floor(test_world_y), math.floor(test_world_x)] == 1:
@@ -445,6 +445,8 @@ example_cellmap = [
     "100001001",
     "100001001",
     "111111001",
+    "100000001",
+    "100000001",
     "100000001",
     "100000001",
     "111111111",
