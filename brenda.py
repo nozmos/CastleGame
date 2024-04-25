@@ -36,10 +36,12 @@ RENDER_DISTANCE_WORLD = float(RENDER_DISTANCE_GRID * CELL_SIZE)
 
 FOV: float = np.pi / 3.0
 
-MOVE_SPEED: float = CELL_SIZE / 4.0
-TURN_SPEED: float = np.pi / 30.0
+MOVE_SPEED: float = CELL_SIZE * 4.0
+TURN_SPEED: float = np.pi / 1.5
 
 MIN_COLLISION_DISTANCE = CELL_SIZE / 6.0
+
+dt = 0.0
 
 
 def rgb_to_bash_fg(rgb: tuple[int, int, int] | list[int, int, int], text: str) -> str:
@@ -376,7 +378,7 @@ def collide(
 
     return new_obj_x, new_obj_y
 
-
+# FIXME
 def collide_and_slide(
         worldmap: np.array,
         obj_xy: tuple,
@@ -434,25 +436,19 @@ def collide_and_slide(
 ####################################
 
 example_cellmap = [
-    "1111111",
-    "1000001",
-    "1011101",
-    "1000101",
-    "1011101",
-    "1000001",
-    "1111111",
+    "111111111",
+    "100000001",
+    "100000001",
+    "100111001",
+    "100001001",
+    "100001001",
+    "111111001",
+    "100000001",
+    "100000001",
+    "111111111",
 ]
 
 example_worldmap = cellmap_to_worldmap(example_cellmap)
-
-_grid_w, _grid_h = get_grid_size(example_cellmap)
-_world_w, _world_h = CELL_SIZE * _grid_w, CELL_SIZE * _grid_h
-
-_player_grid_x: int = 1
-_player_grid_y: int = 1
-_player_world_x: float = (_player_grid_x + 0.5) * float(CELL_SIZE)
-_player_world_y: float = (_player_grid_y + 0.5) * float(CELL_SIZE)
-
 
 @dataclass
 class State:
@@ -470,28 +466,24 @@ def update(prev_state: State, delta_time: int, keys: set[keyboard.Key]):
     try:
 
         if any(key.char == "a" for key in keys):
-            new_player_angle = (new_player_angle - TURN_SPEED) % (2.0 * np.pi)
+            new_player_angle = (new_player_angle - TURN_SPEED * delta_time) % (2.0 * np.pi)
         if any(key.char == "d" for key in keys):
-            new_player_angle = (new_player_angle + TURN_SPEED) % (2.0 * np.pi)
+            new_player_angle = (new_player_angle + TURN_SPEED * delta_time) % (2.0 * np.pi)
 
         if any(key.char == "w" for key in keys):
             new_player_world_x, new_player_world_y = collide(
                 worldmap = example_worldmap,
                 obj_xy = (new_player_world_x, new_player_world_y),
                 angle = new_player_angle,
-                speed = MOVE_SPEED,
+                speed = MOVE_SPEED * delta_time,
             )
-            # new_player_world_x += MOVE_SPEED * math.cos(new_player_angle)
-            # new_player_world_y += MOVE_SPEED * math.sin(new_player_angle)
         if any(key.char == "s" for key in keys):
             new_player_world_x, new_player_world_y = collide(
                 worldmap = example_worldmap,
                 obj_xy = (new_player_world_x, new_player_world_y),
                 angle = np.pi + new_player_angle,
-                speed = MOVE_SPEED,
+                speed = MOVE_SPEED * delta_time,
             )
-            # new_player_world_x -= MOVE_SPEED * math.cos(new_player_angle)
-            # new_player_world_y -= MOVE_SPEED * math.sin(new_player_angle)
     
     except AttributeError:
         pass
@@ -507,34 +499,39 @@ def render(term: blessed.Terminal, state: State, height: int, width: int):
     player_world_xy = (state.player_world_x, state.player_world_y)
     viewport_image = worldmap_to_raycast_image(
         example_worldmap, player_world_xy, state.player_angle,
-        viewport_width=48, viewport_height=48, raycast_step=1.0, #birds_eye=True
+        viewport_width=64, viewport_height=48,
+        raycast_step=1.0, #birds_eye=True
     )
     frame = FrameData.generate_from_image_c(viewport_image)
     print(term.move_xy(0, 0) + frame.decode())
-    # print(term.move_xy(0, 0) + str(time.time()))
-    print(term.move_xy(0, 0) + str(np.rad2deg(state.player_angle)))
+    print(term.move_xy(0, 0) + str(dt))
+    # print(term.move_xy(0, 0) + str(np.rad2deg(state.player_angle)))
 
 
 def main(term: blessed.Terminal):
+    global dt
     # assert term.number_of_colors == 1 << 24
 
     with term.raw(), term.hidden_cursor(), term.fullscreen(), keyboard.Events() as event_provider:
 
         state = State()
         keys_down = set()
-        t = time.time()
 
         # Game Loop
         while True:
+
+            t0 = time.time()
+
             while (event := event_provider.get(0)) is not None:
                 # assumes events come in time order
                 if isinstance(event, keyboard.Events.Press):
                     keys_down.add(event.key)
                 elif isinstance(event, keyboard.Events.Release):
                     keys_down.remove(event.key)
-            
-            state = update(state, t - time.time(), keys_down)
+            state = update(state, dt, keys_down)
             render(term, state, SCREEN_H, SCREEN_W)
+
+            dt = time.time() - t0
 
             if keyboard.Key.esc in keys_down:
                 break
