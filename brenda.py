@@ -43,6 +43,10 @@ MIN_COLLISION_DISTANCE = CELL_SIZE / 6.0
 
 dt = 0.0
 
+class CellCode:
+    EMPTY = 0
+    WALL = 1
+    THING = 2
 
 def rgb_to_bash_fg(rgb: tuple[int, int, int] | list[int, int, int], text: str) -> str:
     '''Returns `text` formatted for bash so that it prints with fg colour defined by `rgb`'''
@@ -239,14 +243,15 @@ def raycast(
 
         test_world_x = obj_x + unit_x * distance_to_wall
         test_world_y = obj_y + unit_y * distance_to_wall
+        cell_code = worldmap[math.floor(test_world_y), math.floor(test_world_x)]
         
         if test_world_x < 0 or test_world_x > world_w or test_world_y < 0 or test_world_y > world_h:
             distance_to_wall = RENDER_DISTANCE_WORLD
             break
-        elif worldmap[math.floor(test_world_y), math.floor(test_world_x)] == 1:
+        elif cell_code != 0:
             break
 
-    return distance_to_wall
+    return distance_to_wall, cell_code
 
 
 def worldmap_to_raycast_image(
@@ -280,7 +285,7 @@ def worldmap_to_raycast_image(
         dev_angle = abs(ray_angle - view_angle) # angular deviation from view_angle
         unit_x, unit_y = math.cos(ray_angle), math.sin(ray_angle)
         
-        distance_to_wall = raycast(worldmap, camera_world_xy, ray_angle, raycast_step)
+        distance_to_wall, cell_code = raycast(worldmap, camera_world_xy, ray_angle, raycast_step)
 
         if birds_eye:
             # draw raycast in red
@@ -304,12 +309,14 @@ def worldmap_to_raycast_image(
 
             for screen_y in range(viewport_height):
                 if screen_y < ceiling:
-                    player_view_pixels[screen_x, screen_y] = (0, 0, 0)
+                    v = max( 0, int(150 * (0.4 - screen_y / SCREEN_H)) )
+                    player_view_pixels[screen_x, screen_y] = (v, v, v)
                 elif screen_y < floor:
                     v = max( 0, int(255 * (1.0 - distance_to_wall / RENDER_DISTANCE_WORLD)) )
                     player_view_pixels[screen_x, screen_y] = (v, v, v)
                 else:
-                    player_view_pixels[screen_x, screen_y] = (50, 50, 50)
+                    v = max( 0, int(150 * (screen_y / SCREEN_H - 0.6)) )
+                    player_view_pixels[screen_x, screen_y] = (v, v, v)
     
     if birds_eye:
         # draw player in green
