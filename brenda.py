@@ -21,15 +21,6 @@ np.set_printoptions(threshold=sys.maxsize)
 
 STOP = False
 
-SCREEN_W, SCREEN_H = 64, 48
-HW_STRETCH = 1.5
-
-ANSI_NEWLINE = "\r\n"
-ANSI_ESC = "\033"
-ANSI_CURSORUP = lambda n: f"{ANSI_ESC}[{n}A"
-ANSI_HIDECURSOR = f"{ANSI_ESC}[?25l"
-ANSI_SHOWCURSOR = f"{ANSI_ESC}[?25h"
-
 CELL_SIZE = 64
 RENDER_DISTANCE_GRID = 5
 RENDER_DISTANCE_WORLD = float(RENDER_DISTANCE_GRID * CELL_SIZE)
@@ -95,117 +86,16 @@ def get_grid_size(cellmap: list[str]) -> tuple:
     return CELL_SIZE * max(len(row) for row in cellmap), CELL_SIZE * len(cellmap)
 
 
-class FrameData(bytes):
+def image_to_term(img: Image.Image, width, height) -> str:
+    framedata = ""
+    image_arr = np.array(img, dtype="uint8")
+        
+    for row in image_arr:
+        row_str = "".join(rgb_to_bash_bg(rgb, " ") for rgb in row) + "\n"
+        framedata += row_str
 
-    def __init__(self, string: str, **kwargs) -> None:
-        super().__init__(string, encoding="utf-8", **kwargs)
+    return framedata
 
-    @classmethod
-    def generate_from_image_path(cls, imgpath: pathlib.Path | str) -> bytes:
-        global SCREEN_W, SCREEN_H
-        framedata = bytearray("", "utf-8")
-
-        with Image.open(imgpath) as image:
-            # bash chars are not square so image must be streched to keep visual proportion
-            image = image.resize((int(SCREEN_W * HW_STRETCH), SCREEN_H)).convert("L")
-
-            image_arr = np.array(image, dtype="uint8")
-            
-        for row in image_arr:
-            row_str = "".join(rgb_to_bash_bg((g, g, g), " ") for g in row) + f'{ANSI_ESC}[0m{ANSI_NEWLINE}'
-            framedata += bytearray(row_str, 'utf-8')
-
-        return framedata# + bytes(ANSI_CURSORUP(SCREEN_H + 1), "utf-8")
-
-    @classmethod
-    def generate_from_image_path_c(cls, imgpath: pathlib.Path | str) -> bytes:
-        global SCREEN_W, SCREEN_H
-        framedata = bytearray("", "utf-8")
-
-        with Image.open(imgpath) as image:
-            # bash chars are not square so image must be streched to keep visual proportion
-            image = image.resize((int(SCREEN_W * HW_STRETCH), SCREEN_H))
-            image_arr = np.array(image, dtype="uint8")
-            
-        for row in image_arr:
-            row_str = "".join(rgb_to_bash_bg(rgb, " ") for rgb in row) + f'{ANSI_ESC}[0m{ANSI_NEWLINE}'
-            framedata += bytearray(row_str, 'utf-8')
-
-        return framedata# + bytes(ANSI_CURSORUP(SCREEN_H + 1), "utf-8")
-    
-    @classmethod
-    def generate_from_image(cls, img: Image.Image) -> bytearray:
-        global SCREEN_W, SCREEN_H
-        framedata = bytearray("", "utf-8")
-        image_arr = np.array( img.copy().resize((int(SCREEN_W * HW_STRETCH), SCREEN_H)).convert("L"), dtype="uint8" )
-            
-        for row in image_arr:
-            row_str = "".join(rgb_to_bash_bg((v, v, v), " ") for v in row) + f'{ANSI_ESC}[0m{ANSI_NEWLINE}'
-            framedata += bytearray(row_str, 'utf-8')
-
-        return framedata# + bytes(ANSI_CURSORUP(SCREEN_H + 1), "utf-8")
-    
-    @classmethod
-    def generate_from_image_c(cls, img: Image.Image) -> bytearray:
-        global SCREEN_W, SCREEN_H
-        framedata = bytearray("", "utf-8")
-        image_arr = np.array( img.copy().resize((int(SCREEN_W * HW_STRETCH), SCREEN_H)), dtype="uint8" )
-            
-        for row in image_arr:
-            row_str = "".join(rgb_to_bash_bg(rgb, " ") for rgb in row) + f'{ANSI_ESC}[0m{ANSI_NEWLINE}'
-            framedata += bytearray(row_str, 'utf-8')
-
-        return framedata# + bytes(ANSI_CURSORUP(SCREEN_H + 1), "utf-8")
-
-#### DEPRECATED ####
-
-# def generate_rect(x: int, y: int, size: tuple[int, int]) -> bytearray:
-#     '''Generates framedata for a rect of given size at top-left coordinates (x, y)'''
-#     global SCREEN_W, SCREEN_H
-#     framedata = bytearray("", "utf-8")
-
-#     canvas = np.zeros((SCREEN_W, SCREEN_H), dtype="uint8")
-#     rect = np.ones(size, dtype="uint8") * 255
-#     canvas[x:x+rect.shape[0], y:y+rect.shape[1]] = rect
-#     canvas = canvas.transpose()
-            
-#     for row in canvas:
-#         row_str = "".join(rgb_to_bash_bg((g, g, g), " ") for g in row) + f'{ANSI_ESC}[0m{ANSI_NEWLINE}'
-#         framedata += bytearray(row_str, 'utf-8')
-
-#     return framedata + bytes(ANSI_CURSORUP(SCREEN_H + 1), "utf-8")
-
-
-# def shrink_image(source: Image.Image, new_size: tuple, origin: tuple=(0,0), mode: str="RGB", bg_colour: tuple=(0,0,0)) -> Image.Image:
-#     new_width, new_height = int(new_size[0]), int(new_size[1])
-#     shrink_x, shrink_y = new_size[0] / source.size[0], new_size[1] / source.size[1]
-#     shrunk_pixels = source.copy().resize((new_width, new_height)).load()
-    
-#     canvas = Image.new(mode, source.size, color=bg_colour)
-#     canvas_pixels = canvas.load()
-
-#     px = int( (1.0 - shrink_x) * float(origin[0]) ) 
-#     py = int( (1.0 - shrink_y) * float(origin[1]) ) 
-
-#     for i in range(px, min(px + new_width, source.size[0])):
-#         for j in range(py, min(py + new_height, source.size[1])):
-#             sx = i - px
-#             sy = j - py
-#             canvas_pixels[i, j] = shrunk_pixels[sx, sy]
-#     return canvas
-
-
-# def paste_image(source: Image.Image, target: Image.Image, xy: tuple) -> Image.Image:
-#     source_copy, target_copy = source.copy(), target.copy()
-#     source_map, target_map = source_copy.load(), target_copy.load()
-#     tx, ty = xy
-#     for i in range(tx, min(tx + source_copy.size[0], target_copy.size[0])):
-#         for j in range(ty, min(ty + source_copy.size[1], target_copy.size[1])):
-#             sx, sy = i - tx, j - ty
-#             target_map[i, j] = source_map[sx, sy]
-#     return target_copy
-
-#######################
 
 def cellmap_to_worldmap(cellmap: list[str]) -> np.array:
     return np.concatenate(      # concatenate rows into full worldmap
@@ -256,8 +146,8 @@ def worldmap_to_raycast_image(
         worldmap: np.array,
         camera_world_xy: tuple,
         view_angle: float,
-        viewport_width: int=SCREEN_W,
-        viewport_height: int=SCREEN_H,
+        viewport_width: int,
+        viewport_height: int,
         fov: float=FOV,
         raycast_step: float=1.0,
         birds_eye: bool=False,
@@ -307,13 +197,13 @@ def worldmap_to_raycast_image(
 
             for screen_y in range(viewport_height):
                 if screen_y < ceiling:
-                    v = max( 0, int(150 * (0.4 - screen_y / SCREEN_H)) )
+                    v = max( 0, int(150 * (0.4 - screen_y / viewport_height)) )
                     player_view_pixels[screen_x, screen_y] = (v, v, v)
                 elif screen_y < floor:
                     v = max( 0, int(255 * (1.0 - distance_to_wall / RENDER_DISTANCE_WORLD)) )
                     player_view_pixels[screen_x, screen_y] = (v, v, v)
                 else:
-                    v = max( 0, int(150 * (screen_y / SCREEN_H - 0.6)) )
+                    v = max( 0, int(150 * (screen_y / viewport_height - 0.6)) )
                     player_view_pixels[screen_x, screen_y] = (v, v, v)
     
     if birds_eye:
@@ -506,25 +396,22 @@ def update(prev_state: State, delta_time: int, keys: set[keyboard.Key]):
     )
 
 
-def render(term: blessed.Terminal, state: State, height: int, width: int):
+def render(term: blessed.Terminal, state: State, width: int, height: int):
     player_world_xy = (state.player_world_x, state.player_world_y)
     viewport_image = worldmap_to_raycast_image(
         example_worldmap, player_world_xy, state.player_angle,
-        viewport_width=48, viewport_height=48,
+        viewport_width=width, viewport_height=height,
         raycast_step=1.0, #birds_eye=True
     )
-    frame = FrameData.generate_from_image_c(viewport_image)
-    print(term.move_xy(0, 0) + frame.decode())
+    frame = image_to_term(viewport_image, width, height)
+    print(term.move_xy(0, 0) + frame)
     if state.delta_time != 0:
         print(f"{term.move_xy(0, 0)}{1/state.delta_time:.1f}")
     # print(term.move_xy(0, 0) + str(np.rad2deg(state.player_angle)))
 
 
 def main(term: blessed.Terminal):
-    # assert term.number_of_colors == 1 << 24
-
     with term.raw(), term.hidden_cursor(), term.fullscreen(), keyboard.Events() as event_provider:
-
         state = State()
         keys_down = set()
         delta_time = 0
@@ -547,7 +434,7 @@ def main(term: blessed.Terminal):
                 elif isinstance(event, keyboard.Events.Release):
                     keys_down.remove(event.key)
             state = update(state, delta_time, keys_down)
-            render(term, state, SCREEN_H, SCREEN_W)
+            render(term, state, 96, 48)
 
 
             if keyboard.Key.esc in keys_down:
