@@ -86,12 +86,16 @@ def get_grid_size(cellmap: list[str]) -> tuple:
     return CELL_SIZE * max(len(row) for row in cellmap), CELL_SIZE * len(cellmap)
 
 
-def image_to_term(img: Image.Image, width, height) -> str:
+def image_to_term(img: Image.Image, text_overlay: list[str]) -> str:
     framedata = ""
     image_arr = np.array(img, dtype="uint8")
         
-    for row in image_arr:
-        row_str = "".join(rgb_to_bash_bg(rgb, " ") for rgb in row) + "\n"
+    for y, row in enumerate(image_arr):
+        if y < len(text_overlay):
+            text_line = text_overlay[y]
+        else:
+            text_line = ""
+        row_str = "".join(rgb_to_bash_bg(rgb, rgb_to_bash_fg((255, 0, 0), text_line[x]) if x < len(text_line) else " ") for x, rgb in enumerate(row)) + "\n"
         framedata += row_str
 
     return framedata
@@ -403,10 +407,12 @@ def render(term: blessed.Terminal, state: State, width: int, height: int):
         viewport_width=width, viewport_height=height,
         raycast_step=1.0, #birds_eye=True
     )
-    frame = image_to_term(viewport_image, width, height)
-    print(term.move_xy(0, 0) + frame)
+    text_overlay = []
     if state.delta_time != 0:
-        print(f"{term.move_xy(0, 0)}{1/state.delta_time:.1f}")
+        text_overlay.append(f"FPS: {1/state.delta_time:.1f}")
+    text_overlay.append(f"angle: {math.degrees(state.player_angle)}")
+    frame = image_to_term(viewport_image, text_overlay)
+    print(term.move_xy(0, 0) + frame)
     # print(term.move_xy(0, 0) + str(np.rad2deg(state.player_angle)))
 
 
