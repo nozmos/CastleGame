@@ -533,6 +533,10 @@ def main(term: blessed.Terminal):
 
             t0 = time.time()
 
+            # consume keypresses so they don't get printed to terminal after the program exits
+            while term.kbhit(0):
+                term.getch()
+
             while (event := event_provider.get(0)) is not None:
                 # assumes events come in time order
                 if isinstance(event, keyboard.Events.Press):
