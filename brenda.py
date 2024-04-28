@@ -410,7 +410,7 @@ def render(term: blessed.Terminal, state: State, width: int, height: int):
     text_overlay = []
     if state.delta_time != 0:
         text_overlay.append(f"FPS: {1/state.delta_time:.1f}")
-    text_overlay.append(f"angle: {math.degrees(state.player_angle)}")
+    text_overlay.append(f"angle: {math.degrees(state.player_angle):.0f}")
     frame = image_to_term(viewport_image, text_overlay)
     print(term.move_xy(0, 0) + frame)
     # print(term.move_xy(0, 0) + str(np.rad2deg(state.player_angle)))
