@@ -515,7 +515,8 @@ def render(term: blessed.Terminal, state: State, height: int, width: int):
     )
     frame = FrameData.generate_from_image_c(viewport_image)
     print(term.move_xy(0, 0) + frame.decode())
-    print(term.move_xy(0, 0) + str(dt))
+    if dt != 0:
+        print(f"{term.move_xy(0, 0)}{1/dt:.1f}")
     # print(term.move_xy(0, 0) + str(np.rad2deg(state.player_angle)))
 
 
