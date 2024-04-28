@@ -41,8 +41,6 @@ TURN_SPEED: float = np.pi / 1.5
 
 MIN_COLLISION_DISTANCE = CELL_SIZE / 6.0
 
-dt = 0.0
-
 class CellCode:
     EMPTY = 0
     WALL = 1
@@ -466,6 +464,7 @@ class State:
     player_angle: float = 0.0
     player_world_x: float = (1 + 0.5) * float(CELL_SIZE)
     player_world_y: float = (1 + 0.5) * float(CELL_SIZE)
+    delta_time: float = 0.0
 
 
 def update(prev_state: State, delta_time: int, keys: set[keyboard.Key]):
@@ -503,6 +502,7 @@ def update(prev_state: State, delta_time: int, keys: set[keyboard.Key]):
         player_angle=new_player_angle,
         player_world_x=new_player_world_x,
         player_world_y=new_player_world_y,
+        delta_time=delta_time,
     )
 
 
@@ -515,24 +515,26 @@ def render(term: blessed.Terminal, state: State, height: int, width: int):
     )
     frame = FrameData.generate_from_image_c(viewport_image)
     print(term.move_xy(0, 0) + frame.decode())
-    if dt != 0:
-        print(f"{term.move_xy(0, 0)}{1/dt:.1f}")
+    if state.delta_time != 0:
+        print(f"{term.move_xy(0, 0)}{1/state.delta_time:.1f}")
     # print(term.move_xy(0, 0) + str(np.rad2deg(state.player_angle)))
 
 
 def main(term: blessed.Terminal):
-    global dt
     # assert term.number_of_colors == 1 << 24
 
     with term.raw(), term.hidden_cursor(), term.fullscreen(), keyboard.Events() as event_provider:
 
         state = State()
         keys_down = set()
+        delta_time = 0
+        t0 = time.time()
 
         # Game Loop
         while True:
-
-            t0 = time.time()
+            t1 = time.time()
+            delta_time = t1 - t0
+            t0 = t1
 
             # consume keypresses so they don't get printed to terminal after the program exits
             while term.kbhit(0):
@@ -544,10 +546,9 @@ def main(term: blessed.Terminal):
                     keys_down.add(event.key)
                 elif isinstance(event, keyboard.Events.Release):
                     keys_down.remove(event.key)
-            state = update(state, dt, keys_down)
+            state = update(state, delta_time, keys_down)
             render(term, state, SCREEN_H, SCREEN_W)
 
-            dt = time.time() - t0
 
             if keyboard.Key.esc in keys_down:
                 break
