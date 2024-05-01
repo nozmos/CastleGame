@@ -270,7 +270,7 @@ def worldmap_to_raycast_image(
                     player_view_pixels[screen_x, screen_y] = tex_rgb
 
                 else:   # else pixel is part of floor
-                    v = max( 0, int(150 * (screen_y / SCREEN_H - 0.6)) )
+                    v = max( 0, int(150 * (screen_y / viewport_height - 0.6)) )
                     # v = max( 0, int(150 * (1.0 - distance_to_wall / RENDER_DISTANCE_WORLD)) )
                     
                     player_view_pixels[screen_x, screen_y] = (v, v, v)
