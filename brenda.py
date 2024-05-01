@@ -22,15 +22,6 @@ np.set_printoptions(threshold=sys.maxsize)
 
 STOP = False
 
-SCREEN_W, SCREEN_H = 64, 48
-HW_STRETCH = 1.5
-
-ANSI_NEWLINE = "\012"
-ANSI_ESC = "\033"
-ANSI_CURSORUP = lambda n: f"{ANSI_ESC}[{n}A"
-ANSI_HIDECURSOR = f"{ANSI_ESC}[?25l"
-ANSI_SHOWCURSOR = f"{ANSI_ESC}[?25h"
-
 CELL_SIZE = 64
 RENDER_DISTANCE_GRID = 5
 RENDER_DISTANCE_WORLD = float(RENDER_DISTANCE_GRID * CELL_SIZE)
@@ -42,7 +33,9 @@ TURN_SPEED: float = np.pi / 1.5
 
 MIN_COLLISION_DISTANCE = CELL_SIZE / 6.0
 
-dt = 0.0
+WALL_TEXTURE_PATH = "C:\\Users\\Me\\Pictures\\pixelbricks.jpg"
+with Image.open(WALL_TEXTURE_PATH) as img:
+    WALL_TEXTURE_PIXELS = img.resize((CELL_SIZE, CELL_SIZE)).load()
 
 WALL_TEXTURE_PATH = "C:\\Users\\Me\\Pictures\\pixelbricks.jpg"
 with Image.open(WALL_TEXTURE_PATH) as img:
@@ -106,67 +99,20 @@ def get_grid_size(cellmap: list[str]) -> tuple:
     return CELL_SIZE * max(len(row) for row in cellmap), CELL_SIZE * len(cellmap)
 
 
-class FrameData(bytes):
+def image_to_term(img: Image.Image, text_overlay: list[str]) -> str:
+    framedata = ""
+    image_arr = np.array(img, dtype="uint8")
+        
+    for y, row in enumerate(image_arr):
+        if y < len(text_overlay):
+            text_line = text_overlay[y]
+        else:
+            text_line = ""
+        row_str = "".join(rgb_to_bash_bg(rgb, rgb_to_bash_fg((255, 0, 0), text_line[x]) if x < len(text_line) else " ") for x, rgb in enumerate(row)) + "\n"
+        framedata += row_str
 
-    def __init__(self, string: str, **kwargs) -> None:
-        super().__init__(string, encoding="utf-8", **kwargs)
+    return framedata
 
-    @classmethod
-    def generate_from_image_path(cls, imgpath: pathlib.Path | str) -> bytes:
-        global SCREEN_W, SCREEN_H
-        framedata = bytearray("", "utf-8")
-
-        with Image.open(imgpath) as image:
-            # bash chars are not square so image must be streched to keep visual proportion
-            image = image.resize((int(SCREEN_W * HW_STRETCH), SCREEN_H)).convert("L")
-
-            image_arr = np.array(image, dtype="uint8")
-            
-        for row in image_arr:
-            row_str = "".join(rgb_to_bash_bg((g, g, g), " ") for g in row) + f'{ANSI_ESC}[0m{ANSI_NEWLINE}'
-            framedata += bytearray(row_str, 'utf-8')
-
-        return framedata# + bytes(ANSI_CURSORUP(SCREEN_H + 1), "utf-8")
-
-    @classmethod
-    def generate_from_image_path_c(cls, imgpath: pathlib.Path | str) -> bytes:
-        global SCREEN_W, SCREEN_H
-        framedata = bytearray("", "utf-8")
-
-        with Image.open(imgpath) as image:
-            # bash chars are not square so image must be streched to keep visual proportion
-            image = image.resize((int(SCREEN_W * HW_STRETCH), SCREEN_H))
-            image_arr = np.array(image, dtype="uint8")
-            
-        for row in image_arr:
-            row_str = "".join(rgb_to_bash_bg(rgb, " ") for rgb in row) + f'{ANSI_ESC}[0m{ANSI_NEWLINE}'
-            framedata += bytearray(row_str, 'utf-8')
-
-        return framedata# + bytes(ANSI_CURSORUP(SCREEN_H + 1), "utf-8")
-    
-    @classmethod
-    def generate_from_image(cls, img: Image.Image) -> bytearray:
-        global SCREEN_W, SCREEN_H
-        framedata = bytearray("", "utf-8")
-        image_arr = np.array( img.copy().resize((int(SCREEN_W * HW_STRETCH), SCREEN_H)).convert("L"), dtype="uint8" )
-            
-        for row in image_arr:
-            row_str = "".join(rgb_to_bash_bg((v, v, v), " ") for v in row) + f'{ANSI_ESC}[0m{ANSI_NEWLINE}'
-            framedata += bytearray(row_str, 'utf-8')
-
-        return framedata# + bytes(ANSI_CURSORUP(SCREEN_H + 1), "utf-8")
-    
-    @classmethod
-    def generate_from_image_c(cls, img: Image.Image) -> bytearray:
-        global SCREEN_W, SCREEN_H
-        framedata = bytearray("", "utf-8")
-        image_arr = np.array( img.copy().resize((int(SCREEN_W * HW_STRETCH), SCREEN_H)), dtype="uint8" )
-            
-        for row in image_arr:
-            row_str = "".join(rgb_to_bash_bg(rgb, " ") for rgb in row) + f'{ANSI_ESC}[0m{ANSI_NEWLINE}'
-            framedata += bytearray(row_str, 'utf-8')
-
-        return framedata + bytes(ANSI_CURSORUP(SCREEN_H + 1), "utf-8")
 
 def cellmap_to_worldmap(cellmap: list[str]) -> np.array:
     return np.concatenate(      # concatenate rows into full worldmap
@@ -217,8 +163,8 @@ def worldmap_to_raycast_image(
         worldmap: np.array,
         camera_world_xy: tuple,
         view_angle: float,
-        viewport_width: int=SCREEN_W,
-        viewport_height: int=SCREEN_H,
+        viewport_width: int,
+        viewport_height: int,
         fov: float=FOV,
         raycast_step: float=1.0,
         birds_eye: bool=False,
@@ -276,9 +222,8 @@ def worldmap_to_raycast_image(
             floor = viewport_height - ceiling
 
             for screen_y in range(viewport_height):
-
-                if screen_y < ceiling:  # if pixel is part of ceiling
-                    v = max( 0, int(150 * (0.4 - screen_y / SCREEN_H)) )
+                if screen_y < ceiling:
+                    v = max( 0, int(150 * (0.4 - screen_y / viewport_height)) )
                     player_view_pixels[screen_x, screen_y] = (v, v, v)
 
                 elif screen_y < floor:  # if pixel is part of wall (floor > y > ceiling)
@@ -476,6 +421,7 @@ class State:
     player_angle: float = 0.0
     player_world_x: float = (1 + 0.5) * float(CELL_SIZE)
     player_world_y: float = (1 + 0.5) * float(CELL_SIZE)
+    delta_time: float = 0.0
 
 
 def update(prev_state: State, delta_time: int, keys: set[keyboard.Key]):
@@ -513,34 +459,42 @@ def update(prev_state: State, delta_time: int, keys: set[keyboard.Key]):
         player_angle=new_player_angle,
         player_world_x=new_player_world_x,
         player_world_y=new_player_world_y,
+        delta_time=delta_time,
     )
 
 
-def render(term: blessed.Terminal, state: State, height: int, width: int):
+def render(term: blessed.Terminal, state: State, width: int, height: int):
     player_world_xy = (state.player_world_x, state.player_world_y)
     viewport_image = worldmap_to_raycast_image(
         example_worldmap, player_world_xy, state.player_angle,
-        viewport_width=48, viewport_height=48,
+        viewport_width=width, viewport_height=height,
         raycast_step=1.0, #birds_eye=True
     )
-    frame = FrameData.generate_from_image_c(viewport_image)
-    print(term.move_xy(0, 0) + frame.decode())
-    print(term.move_xy(0, 0) + f"delta={dt}\n" + f"angle={state.player_angle}")
+    text_overlay = []
+    if state.delta_time != 0:
+        text_overlay.append(f"FPS: {1/state.delta_time:.1f}")
+    text_overlay.append(f"angle: {math.degrees(state.player_angle):.0f}")
+    frame = image_to_term(viewport_image, text_overlay)
+    print(term.move_xy(0, 0) + frame)
+    # print(term.move_xy(0, 0) + str(np.rad2deg(state.player_angle)))
 
 
 def main(term: blessed.Terminal):
-    global dt
-    # assert term.number_of_colors == 1 << 24
-
     with term.raw(), term.hidden_cursor(), term.fullscreen(), keyboard.Events() as event_provider:
-
         state = State()
         keys_down = set()
+        delta_time = 0
+        t0 = time.time()
 
         # Game Loop
         while True:
+            t1 = time.time()
+            delta_time = t1 - t0
+            t0 = t1
 
-            t0 = time.time()
+            # consume keypresses so they don't get printed to terminal after the program exits
+            while term.kbhit(0):
+                term.getch()
 
             while (event := event_provider.get(0)) is not None:
                 # assumes events come in time order
@@ -551,10 +505,9 @@ def main(term: blessed.Terminal):
                         keys_down.remove(event.key)
                     except KeyError:
                         pass
-            state = update(state, dt, keys_down)
-            render(term, state, SCREEN_H, SCREEN_W)
+            state = update(state, delta_time, keys_down)
+            render(term, state, 96, 48)
 
-            dt = time.time() - t0
 
             if keyboard.Key.esc in keys_down:
                 break
