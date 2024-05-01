@@ -6,6 +6,7 @@
 Renders images to bash terminal using UTF-8 characters with ANSI sequences.
 '''
 from dataclasses import dataclass
+import itertools
 import math
 import time
 import blessed
@@ -24,7 +25,7 @@ STOP = False
 SCREEN_W, SCREEN_H = 64, 48
 HW_STRETCH = 1.5
 
-ANSI_NEWLINE = "\r\n"
+ANSI_NEWLINE = "\012"
 ANSI_ESC = "\033"
 ANSI_CURSORUP = lambda n: f"{ANSI_ESC}[{n}A"
 ANSI_HIDECURSOR = f"{ANSI_ESC}[?25l"
@@ -43,10 +44,18 @@ MIN_COLLISION_DISTANCE = CELL_SIZE / 6.0
 
 dt = 0.0
 
+WALL_TEXTURE_PATH = "C:\\Users\\Me\\Pictures\\pixelbricks.jpg"
+with Image.open(WALL_TEXTURE_PATH) as img:
+    WALL_TEXTURE_PIXELS = img.resize((CELL_SIZE, CELL_SIZE)).load()
+
 class CellCode:
     EMPTY = 0
     WALL = 1
     THING = 2
+
+def clamp(x: float, lower: float, upper: float) -> float:
+    '''Returns lower if x < lower, upper if x > upper, or x otherwise'''
+    return min(max(x, lower), upper)
 
 def rgb_to_bash_fg(rgb: tuple[int, int, int] | list[int, int, int], text: str) -> str:
     '''Returns `text` formatted for bash so that it prints with fg colour defined by `rgb`'''
@@ -157,57 +166,7 @@ class FrameData(bytes):
             row_str = "".join(rgb_to_bash_bg(rgb, " ") for rgb in row) + f'{ANSI_ESC}[0m{ANSI_NEWLINE}'
             framedata += bytearray(row_str, 'utf-8')
 
-        return framedata# + bytes(ANSI_CURSORUP(SCREEN_H + 1), "utf-8")
-
-#### DEPRECATED ####
-
-# def generate_rect(x: int, y: int, size: tuple[int, int]) -> bytearray:
-#     '''Generates framedata for a rect of given size at top-left coordinates (x, y)'''
-#     global SCREEN_W, SCREEN_H
-#     framedata = bytearray("", "utf-8")
-
-#     canvas = np.zeros((SCREEN_W, SCREEN_H), dtype="uint8")
-#     rect = np.ones(size, dtype="uint8") * 255
-#     canvas[x:x+rect.shape[0], y:y+rect.shape[1]] = rect
-#     canvas = canvas.transpose()
-            
-#     for row in canvas:
-#         row_str = "".join(rgb_to_bash_bg((g, g, g), " ") for g in row) + f'{ANSI_ESC}[0m{ANSI_NEWLINE}'
-#         framedata += bytearray(row_str, 'utf-8')
-
-#     return framedata + bytes(ANSI_CURSORUP(SCREEN_H + 1), "utf-8")
-
-
-# def shrink_image(source: Image.Image, new_size: tuple, origin: tuple=(0,0), mode: str="RGB", bg_colour: tuple=(0,0,0)) -> Image.Image:
-#     new_width, new_height = int(new_size[0]), int(new_size[1])
-#     shrink_x, shrink_y = new_size[0] / source.size[0], new_size[1] / source.size[1]
-#     shrunk_pixels = source.copy().resize((new_width, new_height)).load()
-    
-#     canvas = Image.new(mode, source.size, color=bg_colour)
-#     canvas_pixels = canvas.load()
-
-#     px = int( (1.0 - shrink_x) * float(origin[0]) ) 
-#     py = int( (1.0 - shrink_y) * float(origin[1]) ) 
-
-#     for i in range(px, min(px + new_width, source.size[0])):
-#         for j in range(py, min(py + new_height, source.size[1])):
-#             sx = i - px
-#             sy = j - py
-#             canvas_pixels[i, j] = shrunk_pixels[sx, sy]
-#     return canvas
-
-
-# def paste_image(source: Image.Image, target: Image.Image, xy: tuple) -> Image.Image:
-#     source_copy, target_copy = source.copy(), target.copy()
-#     source_map, target_map = source_copy.load(), target_copy.load()
-#     tx, ty = xy
-#     for i in range(tx, min(tx + source_copy.size[0], target_copy.size[0])):
-#         for j in range(ty, min(ty + source_copy.size[1], target_copy.size[1])):
-#             sx, sy = i - tx, j - ty
-#             target_map[i, j] = source_map[sx, sy]
-#     return target_copy
-
-#######################
+        return framedata + bytes(ANSI_CURSORUP(SCREEN_H + 1), "utf-8")
 
 def cellmap_to_worldmap(cellmap: list[str]) -> np.array:
     return np.concatenate(      # concatenate rows into full worldmap
@@ -271,7 +230,8 @@ def worldmap_to_raycast_image(
         raycast_view = worldmap_to_image(worldmap)
         draw = ImageDraw.Draw(raycast_view)
     
-    camera_world_x, camera_world_y = camera_world_xy
+    cam_x, cam_y = camera_world_xy
+    cam_gx, cam_gy = math.floor(cam_x / CELL_SIZE), math.floor(cam_y / CELL_SIZE)
     player_view = Image.new("RGB", (viewport_width, viewport_height))
     player_view_pixels = player_view.load()
     
@@ -290,42 +250,95 @@ def worldmap_to_raycast_image(
         if birds_eye:
             # draw raycast in red
             draw.line((
-                camera_world_x,
-                camera_world_y,
-                camera_world_x + unit_x * distance_to_wall,
-                camera_world_y + unit_y * distance_to_wall
+                cam_x,
+                cam_y,
+                cam_x + unit_x * distance_to_wall,
+                cam_y + unit_y * distance_to_wall
             ), fill=(255,0,0))
 
         else:
+            # we care about the distance from viewport to wall
+            # helps avoid viewport sticking through walls (for collision detection)
             perp_view_to_wall_dist = distance_to_wall * math.cos(dev_angle) - distance_to_viewport
+
             try:
+                # wall height can blow up if distance is small, so put a max cap
                 wall_height = min(viewport_height, viewport_height * CELL_SIZE / (2 * perp_view_to_wall_dist * math.tan(fov / 2.0)))
                 if wall_height < 0:
                     wall_height = viewport_height
             except ZeroDivisionError:
                 wall_height = viewport_height
+
+            # ceiling should be max half viewport height
             ceiling = min( float(viewport_height) / 2.0, 0.5 * (float(viewport_height) - wall_height) )
+            
+            # floor is same thickness as ceiling
             floor = viewport_height - ceiling
 
             for screen_y in range(viewport_height):
-                if screen_y < ceiling:
+
+                if screen_y < ceiling:  # if pixel is part of ceiling
                     v = max( 0, int(150 * (0.4 - screen_y / SCREEN_H)) )
                     player_view_pixels[screen_x, screen_y] = (v, v, v)
-                elif screen_y < floor:
-                    v = max( 0, int(255 * (1.0 - distance_to_wall / RENDER_DISTANCE_WORLD)) )
-                    player_view_pixels[screen_x, screen_y] = (v, v, v)
-                else:
+
+                elif screen_y < floor:  # if pixel is part of wall (floor > y > ceiling)
+                    if distance_to_wall == RENDER_DISTANCE_WORLD:
+                        v = 0
+                        player_view_pixels[screen_x, screen_y] = (0, 0, 0)
+                        continue
+
+                    # v = 255 # no fade
+                    v = max( 0, (1.0 - distance_to_wall / RENDER_DISTANCE_WORLD) )
+
+                    # UV SHADING #
+                    
+                    cos_angle = math.cos(ray_angle)
+                    sin_angle = math.sin(ray_angle)
+                    
+                    # world coords of wall intercept point
+                    wall_x, wall_y = cam_x + distance_to_wall * cos_angle, cam_y + distance_to_wall * sin_angle
+                    # grid coords of wall intercept point
+                    wall_gx, wall_gy = math.floor(wall_x / CELL_SIZE), math.floor(wall_y / CELL_SIZE)
+
+                    # +1 if wx > wy, else -1
+                    cam_is_west = (cam_x < wall_x)
+                    cam_is_north = (cam_y > wall_y)
+                    horizontal = abs((wall_gx + 0.5) * CELL_SIZE - wall_x) < abs((wall_gy + 0.5) * CELL_SIZE - wall_y)
+
+                    # map to interval [0, 1)
+                    uv = [0, 0]
+                    if horizontal:
+                        if cam_is_north:
+                            uv[0] = int(CELL_SIZE * ((wall_x / CELL_SIZE) % 1))
+                        else:
+                            uv[0] = int(CELL_SIZE * (1.0 - ((wall_x / CELL_SIZE) % 1)))
+                    else:
+                        if cam_is_west:
+                            uv[0] = int(CELL_SIZE * ((wall_y / CELL_SIZE) % 1))
+                        else:
+                            uv[0] = int(CELL_SIZE * (1.0 - ((wall_y / CELL_SIZE) % 1)))
+
+                    uv[1] = int(CELL_SIZE * (screen_y - ceiling) / wall_height)
+
+                    tex_rgb = tuple(int(v * c) for c in WALL_TEXTURE_PIXELS[*uv])
+
+                    player_view_pixels[screen_x, screen_y] = tex_rgb
+
+                else:   # else pixel is part of floor
                     v = max( 0, int(150 * (screen_y / SCREEN_H - 0.6)) )
+                    # v = max( 0, int(150 * (1.0 - distance_to_wall / RENDER_DISTANCE_WORLD)) )
+                    
                     player_view_pixels[screen_x, screen_y] = (v, v, v)
     
     if birds_eye:
         # draw player in green
         draw.ellipse((
-            camera_world_x - MIN_COLLISION_DISTANCE,
-            camera_world_y - MIN_COLLISION_DISTANCE,
-            camera_world_x + MIN_COLLISION_DISTANCE,
-            camera_world_y + MIN_COLLISION_DISTANCE,
+            cam_x - MIN_COLLISION_DISTANCE,
+            cam_y - MIN_COLLISION_DISTANCE,
+            cam_x + MIN_COLLISION_DISTANCE,
+            cam_y + MIN_COLLISION_DISTANCE,
         ), fill=(0,255,0))
+
     return raycast_view if birds_eye else player_view
 
 
@@ -445,18 +458,15 @@ def collide_and_slide(
 ####################################
 
 example_cellmap = [
-    "111111111",
-    "100000001",
-    "100000001",
-    "100111001",
-    "100001001",
-    "100001001",
-    "111111001",
-    "100000001",
-    "100000001",
-    "100000001",
-    "100000001",
-    "111111111",
+    "11111111",
+    "10000001",
+    "10000001",
+    "10001001",
+    "10001001",
+    "10011001",
+    "10000001",
+    "10000001",
+    "11111111",
 ]
 
 example_worldmap = cellmap_to_worldmap(example_cellmap)
@@ -515,8 +525,7 @@ def render(term: blessed.Terminal, state: State, height: int, width: int):
     )
     frame = FrameData.generate_from_image_c(viewport_image)
     print(term.move_xy(0, 0) + frame.decode())
-    print(term.move_xy(0, 0) + str(dt))
-    # print(term.move_xy(0, 0) + str(np.rad2deg(state.player_angle)))
+    print(term.move_xy(0, 0) + f"delta={dt}\n" + f"angle={state.player_angle}")
 
 
 def main(term: blessed.Terminal):
@@ -538,7 +547,10 @@ def main(term: blessed.Terminal):
                 if isinstance(event, keyboard.Events.Press):
                     keys_down.add(event.key)
                 elif isinstance(event, keyboard.Events.Release):
-                    keys_down.remove(event.key)
+                    try:
+                        keys_down.remove(event.key)
+                    except KeyError:
+                        pass
             state = update(state, dt, keys_down)
             render(term, state, SCREEN_H, SCREEN_W)
 
